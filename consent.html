@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-uqAXMvjMjmscFr+wJwwnzQwnjv//f1y9hLhdJn7SFyw=' https://cdn.jsdelivr.net; connect-src https://biuslymipyqxtzgfknze.supabase.co; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Conectar o Claude ao Fechamento do Quintal</title>
+<style>
+  :root { --bg:#f6f4f1; --fg:#201c18; --mut:#6a625a; --card:#fff; --line:#ddd6cd; --ac:#8a2b12; --acfg:#fff; --warn:#fdecea; --warnfg:#8a1c10; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#181512; --fg:#f1ece6; --mut:#a89f95; --card:#221e1a; --line:#3a342d; --ac:#e0764f; --acfg:#1a0d07; --warn:#3a1713; --warnfg:#ffb4a6; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px 16px; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { width:100%; max-width:26rem; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:24px; display:flex; flex-direction:column; gap:14px; }
+  h1 { font-size:1.2rem; margin:0; text-wrap:balance; }
+  p { margin:0; color:var(--mut); }
+  label { font-size:.85rem; color:var(--mut); display:block; margin-bottom:4px; }
+  input { width:100%; padding:10px 12px; font:inherit; color:var(--fg); background:var(--bg); border:1px solid var(--line); border-radius:8px; }
+  button { font:inherit; padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+  button.principal { background:var(--ac); color:var(--acfg); border-color:var(--ac); font-weight:600; }
+  button:disabled { opacity:.6; cursor:default; }
+  button:focus-visible, input:focus-visible { outline:2px solid var(--ac); outline-offset:2px; }
+  .linha { display:flex; gap:10px; flex-wrap:wrap; }
+  .linha button { flex:1 1 8rem; }
+  .aviso { background:var(--warn); color:var(--warnfg); padding:10px 12px; border-radius:8px; font-size:.9rem; }
+  form { display:flex; flex-direction:column; gap:12px; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div id="carregando"><p>Carregando…</p></div>
+
+  <section id="login" hidden>
+    <form id="form-login">
+      <h1>Entrar no Fechamento do Quintal</h1>
+      <p>Use o mesmo e-mail e senha do app para continuar.</p>
+      <div id="login-aviso" class="aviso" hidden></div>
+      <div><label for="email">E-mail</label><input id="email" type="email" required autocomplete="username"></div>
+      <div><label for="senha">Senha</label><input id="senha" type="password" required autocomplete="current-password"></div>
+      <button class="principal" type="submit">Entrar</button>
+    </form>
+  </section>
+
+  <section id="pedido" hidden>
+    <h1>Permitir que o <span id="cliente"></span> acesse o Fechamento do Quintal?</h1>
+    <p>Ele vai poder ler e gravar as semanas, compras e demais dados do app, com a sua conta. O acesso volta para <strong id="destino"></strong>.</p>
+    <div class="linha">
+      <button id="aprovar" class="principal" type="button">Permitir</button>
+      <button id="negar" type="button">Negar</button>
+    </div>
+  </section>
+
+  <section id="erro" hidden>
+    <h1>Não foi possível continuar</h1>
+    <div class="aviso" id="erro-msg"></div>
+  </section>
+</main>
+<script type="module">import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.3/+esm";
+
+const SUPABASE_URL = "https://biuslymipyqxtzgfknze.supabase.co";
+// Chave publicável: feita para ficar no navegador. Quem manda de verdade são as regras do banco.
+const CHAVE = "sb_publishable_-JYJ11u2MqUs9X8DugPFZg_D9n1SagW";
+const sb = createClient(SUPABASE_URL, CHAVE, { auth: { persistSession: true, autoRefreshToken: true } });
+
+const $ = (id) => document.getElementById(id);
+const idAut = new URLSearchParams(location.search).get("authorization_id");
+
+function tela(nome) {
+  for (const t of ["carregando", "login", "pedido", "erro"]) $(t).hidden = t !== nome;
+}
+function erro(msg) {
+  $("erro-msg").textContent = msg;
+  tela("erro");
+}
+
+async function mostrarPedido() {
+  const { data: adm } = await sb.rpc("is_admin");
+  if (adm !== true) {
+    await sb.auth.signOut();
+    $("login-aviso").textContent = "Esse usuário não tem acesso ao Fechamento do Quintal.";
+    $("login-aviso").hidden = false;
+    return tela("login");
+  }
+  const { data: det, error } = await sb.auth.oauth.getAuthorizationDetails(idAut);
+  if (error || !det) return erro("Esse pedido de acesso expirou ou é inválido. Volte ao Claude e tente conectar de novo.");
+  if (!("authorization_id" in det)) {
+    location.href = det.redirect_url; // já autorizado antes
+    return;
+  }
+  $("cliente").textContent = det.client?.name || "um aplicativo";
+  try {
+    $("destino").textContent = new URL(det.redirect_uri).host;
+  } catch {
+    $("destino").textContent = "endereço desconhecido";
+  }
+  tela("pedido");
+}
+
+async function decidir(aprovar) {
+  $("aprovar").disabled = true;
+  $("negar").disabled = true;
+  const r = aprovar ? await sb.auth.oauth.approveAuthorization(idAut) : await sb.auth.oauth.denyAuthorization(idAut);
+  if (r.error || !r.data?.redirect_url) return erro("Não foi possível concluir. Volte ao Claude e tente de novo.");
+  location.href = r.data.redirect_url;
+}
+
+async function iniciar() {
+  if (!idAut) return erro("Abra esta página pelo Claude, ao conectar o Fechamento do Quintal.");
+  const { data } = await sb.auth.getSession();
+  if (data.session) return mostrarPedido();
+  tela("login");
+}
+
+$("form-login").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("login-aviso").hidden = true;
+  const { error } = await sb.auth.signInWithPassword({ email: $("email").value, password: $("senha").value });
+  if (error) {
+    $("login-aviso").textContent = "E-mail ou senha incorretos.";
+    $("login-aviso").hidden = false;
+    return;
+  }
+  tela("carregando");
+  mostrarPedido();
+});
+$("aprovar").addEventListener("click", () => decidir(true));
+$("negar").addEventListener("click", () => decidir(false));
+
+iniciar().catch(() => erro("Algo deu errado. Tente conectar de novo pelo Claude."));
+</script>
+</body>
+</html>
